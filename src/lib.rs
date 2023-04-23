@@ -221,7 +221,7 @@ mod tests {
         let bf = Builder::new(num_items, fp_rate).build::<DefaultHasher, String>();
         let bf = Arc::new(Mutex::new(bf));
         let mut handles = vec![];
-        for i in 0..3 {
+        for i in 0..=3 {
             let bf = bf.clone();
             let handle = thread::spawn(move || {
                 let mut filter = bf.lock().unwrap();
