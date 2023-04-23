@@ -193,6 +193,13 @@ impl<T: AsRef<[u8]>> FromIterator<T> for BloomFilter<T> {
     }
 }
 
+/// Displays the bloom filter as a lowercase hex string.
+impl<T: AsRef<[u8]>> std::fmt::Display for BloomFilter<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        return write!(f, "{:#x?}", self.bits);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use sha3::Sha3_512;
@@ -282,28 +289,29 @@ mod tests {
         assert_eq!(false, bf.lock().unwrap().has("4".to_string()));
     }
 
-    /// Empirically trying out varying values of M and K to determine
-    /// false positive rates and see how these evolve based on
-    /// the number of insertions into the filter.
     #[test]
-    fn tweaking_parameters() {
-        let num_items = 10_000;
+    fn test_real_fp_rate() {
+        let capacity = 10_000;
         let wanted_fp_rate = 0.03;
-        let mut bf = Builder::<String>::new(num_items, wanted_fp_rate).build();
+        let mut bf = Builder::<String>::new(capacity, wanted_fp_rate).build();
 
-        for i in 0..1000 {
+        let num_items = 100;
+        for i in 0..num_items {
             bf.insert(format!("{}", i));
         }
 
+        let num_tests = 100;
         let mut false_positives = 0;
-        for _ in 0..100 {
-            if bf.has("5".to_string()) {
+        for i in num_items..num_items + num_tests {
+            if bf.has(format!("{}", i)) {
                 false_positives += 1;
             }
         }
+
+        let real_fp_rate = false_positives as f32 / num_tests as f32;
         println!(
-            "capacity={}, elems_inserted={}, false_positives={}/100",
-            num_items, 1000, false_positives,
+            "capacity={}, elems_inserted={}, wanted_fp_rate={}, fp_rate={}",
+            num_items, num_items, wanted_fp_rate, real_fp_rate,
         );
     }
 }
