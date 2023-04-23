@@ -8,8 +8,7 @@ crates.
 - [ ] Proptest
 - [ ] Plotters empirical vs. analytical
 - [ ] No std version?
-- [ ] Par iter with rayon?
-- [ ] Common traits, make it thread safe?
+- [ ] Common traits
 - [ ] Cargo bench with criterion
 - [ ] Other common traits that could be useful
 - [ ] All CI items
