@@ -5,6 +5,8 @@ pub trait Hasher {
     fn hash(item: impl AsRef<[u8]>) -> u64;
 }
 
+pub type HashFn<T> = Box<dyn Fn(&T) -> u64>;
+
 pub struct DefaultHasher {}
 
 impl Hasher for DefaultHasher {
@@ -14,12 +16,12 @@ impl Hasher for DefaultHasher {
         let result = hasher.finalize();
         let mut buf = [0; 8];
         let mut handle = result.take(8);
-        handle.read(&mut buf).unwrap();
+        handle.read_exact(&mut buf).unwrap();
         u64::from_be_bytes(buf)
     }
 }
 
-struct Builder {
+pub struct Builder {
     num_items: u32,
     fp_rate: f32,
     num_hash_fns: Option<u32>,
@@ -33,6 +35,7 @@ impl Builder {
             fp_rate,
         }
     }
+    #[allow(dead_code)]
     fn num_hash_funcs(mut self, num_hash_fns: u32) -> Builder {
         self.num_hash_fns = Some(num_hash_fns);
         self
@@ -42,7 +45,7 @@ impl Builder {
             Some(n) => n,
             None => optimal_num_hash_fns(self.num_items, self.fp_rate),
         };
-        let mut hash_fns: Vec<Box<dyn Fn(&T) -> usize>> = vec![];
+        let mut hash_fns: Vec<HashFn<T>> = vec![];
         for i in 0..=num_hash_fns {
             let f = Box::new(move |elem: &T| {
                 element_hasher::<H, T>(elem, i as u64, self.num_items as u64)
@@ -60,31 +63,31 @@ impl Builder {
     }
 }
 
-struct BloomFilter<T: AsRef<[u8]>> {
+pub struct BloomFilter<T: AsRef<[u8]>> {
     pub bits: Vec<u8>,
-    hash_fns: Vec<Box<dyn Fn(&T) -> usize>>,
+    hash_fns: Vec<HashFn<T>>,
 }
 
 impl<T: AsRef<[u8]>> BloomFilter<T> {
     pub fn insert(&mut self, elem: T) {
-        let indices: Vec<usize> = self.hash_fns.iter().map(|f| f(&elem)).collect();
-        for idx in indices.into_iter() {
+        self.hash_fns.iter().for_each(|f| {
+            let idx = f(&elem);
             let pos = idx / 8;
             let pos_within_bits = idx % 8;
-            match self.bits.get_mut(pos) {
+            match self.bits.get_mut(pos as usize) {
                 Some(b) => {
                     *b |= 1 << pos_within_bits;
                 }
                 None => panic!("index did not exist"),
             }
-        }
+        });
     }
     pub fn has(&self, elem: T) -> bool {
         for f in self.hash_fns.iter() {
             let idx = f(&elem);
             let pos = idx / 8;
             let pos_within_bits = idx % 8;
-            match self.bits.get(pos) {
+            match self.bits.get(pos as usize) {
                 Some(b) => {
                     // Get the individual bit at the position determined by the hasher function.
                     let bit = (*b >> pos_within_bits) & 1;
@@ -97,7 +100,7 @@ impl<T: AsRef<[u8]>> BloomFilter<T> {
                 None => unreachable!(),
             }
         }
-        return true;
+        true
     }
 }
 
@@ -119,11 +122,11 @@ pub fn optimal_num_hash_fns(num_items: u32, fp_rate: f32) -> u32 {
     num_hash_fns.ceil() as u32
 }
 
-fn element_hasher<H: Hasher, T: AsRef<[u8]>>(item: &T, i: u64, m: u64) -> usize {
+fn element_hasher<H: Hasher, T: AsRef<[u8]>>(item: &T, i: u64, m: u64) -> u64 {
     assert!(i < 32);
     let num = H::hash(item);
     let num = num.checked_add(i).unwrap();
-    (num % m) as usize
+    num % m
 }
 
 /// Converts an iterator into a bloom filter with a default hasher
@@ -215,7 +218,7 @@ mod tests {
     // Criterion benchmark blackbox against a prod crate.
     // Flame graph to understand bottlenecks.
     // Unsafe?
-    //#[test]
+    #[test]
     fn large_capacity() {
         let elems = (0..1000).map(|i| i.to_string()).collect::<Vec<String>>();
         for k in 1..=20 {
