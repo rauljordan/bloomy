@@ -110,7 +110,7 @@ impl<T: AsRef<[u8]>> BloomFilter<T> {
     ///
     /// ## Example
     /// ```
-    /// use bloom::{Builder, DefaultHasher};
+    /// use bloomy::{Builder, DefaultHasher};
     ///
     /// /// Initialize a bloom filter with a default hasher over strings.
     /// let num_items: u32 = 50;
@@ -176,7 +176,7 @@ pub fn optimal_num_hash_fns(num_items: u32, fp_rate: f32) -> u32 {
 ///
 /// ## Example
 /// ```
-/// use bloom::{BloomFilter};
+/// use bloomy::{BloomFilter};
 ///
 /// let items = vec!["foo", "bar", "baz"];
 /// let bf: BloomFilter<&str> = items.into_iter().collect();

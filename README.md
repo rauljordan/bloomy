@@ -15,3 +15,5 @@ crates.
 - [ ] Crates docs and doctest
 - [x] Send + Sync traits
 - [ ] Fine-grained optimization looking at LLVM IR, or raw asm
+- [ ] Check if target fp rate is reached
+- [ ] What happens if filter gets fully filled up?
