@@ -79,6 +79,7 @@ impl<T: AsRef<[u8]>> BloomFilter<T> {
             }
         }
     }
+    pub fn hi(&self) {}
     pub fn has(&self, elem: T) -> bool {
         for f in self.hash_fns.iter() {
             let idx = f(&elem);
