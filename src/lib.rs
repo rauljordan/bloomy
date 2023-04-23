@@ -11,7 +11,7 @@ pub trait Hasher<T: AsRef<[u8]>> {
 
 /// HashFn defines a function pointer that can produce a u64
 /// from an input value and is thread-safe.
-pub type HashFn<T: Clone> = Box<dyn Fn(&T) -> u64 + Send + Sync>;
+pub type HashFn<T> = Box<dyn Fn(&T) -> u64 + Send + Sync>;
 
 /// The default hasher for the bloom filter simply takes the first
 /// 8 bytes from a sha256 hash of an item and reads that
@@ -54,41 +54,42 @@ impl<T: AsRef<[u8]>> Builder<T> {
         self.num_hash_fns = Some(num_hash_fns);
         self
     }
+    #[allow(dead_code)]
+    fn hasher<H: Hasher<T>>(mut self) -> Builder<T> {
+        self.hash_fn = H::hash;
+        self
+    }
     pub fn build(self) -> BloomFilter<T> {
         let num_hash_fns = match self.num_hash_fns {
             Some(n) => n,
             None => optimal_num_hash_fns(self.num_items, self.fp_rate),
         };
-        let mut hash_fns: Vec<HashFn<T>> = vec![];
-        for i in 0..=num_hash_fns {
-            let f = Box::new(move |elem: &T| {
-                let hf = (self.hash_fn).clone();
-                let num = hf(elem);
-                let num = num.checked_add(i as u64).unwrap();
-                num % (self.num_items as u64)
-            });
-            hash_fns.push(f);
-        }
         let required_bits = optimal_bits_needed(self.num_items, self.fp_rate);
 
         // We'll use u64's to store data in our bloom filter.
         let size = (required_bits as f64 / 8.0).ceil() as usize;
         BloomFilter {
             bits: iter::repeat(0).take(size).collect(),
-            hash_fns,
+            num_items: self.num_items,
+            num_hash_fns,
+            hash_fn: self.hash_fn,
         }
     }
 }
 
 pub struct BloomFilter<T: AsRef<[u8]>> {
     pub bits: Vec<u8>,
-    hash_fns: Vec<HashFn<T>>,
+    num_items: u32,
+    num_hash_fns: u32,
+    hash_fn: fn(&T) -> u64,
 }
 
 impl<T: AsRef<[u8]>> BloomFilter<T> {
     pub fn insert(&mut self, elem: T) {
-        self.hash_fns.iter().for_each(|f| {
-            let idx = f(&elem);
+        for i in 0..self.num_hash_fns {
+            let num = (self.hash_fn)(&elem);
+            let num = num.checked_add(i as u64).unwrap();
+            let idx = num % (self.num_items as u64);
             let pos = idx / 8;
             let pos_within_bits = idx % 8;
             match self.bits.get_mut(pos as usize) {
@@ -98,7 +99,7 @@ impl<T: AsRef<[u8]>> BloomFilter<T> {
                 // The position will always refer to a valid index of our bits vector.
                 None => unreachable!(),
             }
-        });
+        }
     }
     /// Checks if the bloom filter contains a specified element. The bloom filter
     /// can produce false positives from this function at the rate specified
@@ -122,8 +123,10 @@ impl<T: AsRef<[u8]>> BloomFilter<T> {
     /// assert_eq!(false, bf.has("nyan"));
     /// ```
     pub fn has(&self, elem: T) -> bool {
-        for f in self.hash_fns.iter() {
-            let idx = f(&elem);
+        for i in 0..self.num_hash_fns {
+            let num = (self.hash_fn)(&elem);
+            let num = num.checked_add(i as u64).unwrap();
+            let idx = num % (self.num_items as u64);
             let pos = idx / 8;
             let pos_within_bits = idx % 8;
             match self.bits.get(pos as usize) {
@@ -192,6 +195,8 @@ impl<T: AsRef<[u8]>> FromIterator<T> for BloomFilter<T> {
 
 #[cfg(test)]
 mod tests {
+    use sha3::Sha3_512;
+
     use super::*;
     use std::sync::{Arc, Mutex};
     use std::thread;
@@ -213,6 +218,32 @@ mod tests {
         let items = vec!["wow", "rust", "is", "so", "cool"];
         let bf: BloomFilter<&str> = items.into_iter().collect();
         assert_eq!(false, bf.has("go"));
+    }
+
+    #[test]
+    fn custom_hasher() {
+        pub struct CustomHasher {}
+
+        impl<T: AsRef<[u8]>> Hasher<T> for CustomHasher {
+            fn hash(item: &T) -> u64 {
+                let mut hasher = Sha3_512::new();
+                hasher.update(item);
+                let result = hasher.finalize();
+                let mut buf = [0; 8];
+                let mut handle = result.take(8);
+                handle.read_exact(&mut buf).unwrap();
+                u64::from_be_bytes(buf)
+            }
+        }
+
+        let num_items: u32 = 50;
+        let fp_rate: f32 = 0.03;
+        let mut bf = Builder::<&str>::new(num_items, fp_rate)
+            .hasher::<CustomHasher>()
+            .build();
+        bf.insert("hello");
+        bf.insert("world");
+        assert_eq!(false, bf.has("nyan"));
     }
 
     #[test]
@@ -256,57 +287,23 @@ mod tests {
     /// the number of insertions into the filter.
     #[test]
     fn tweaking_parameters() {
-        for n in 3..=20 {
-            let elems = (0..n).map(|i| i.to_string()).collect::<Vec<String>>();
-            for k in 1..=n - 1 {
-                let mut false_positives = 0;
-                let mut bf = Builder::<&str>::new(n, 0.03)
-                    .num_hash_funcs(k as u32)
-                    .build();
-                for (idx, elem) in elems.iter().enumerate() {
-                    bf.insert(&elem);
-                    if bf.has("foo") {
-                        false_positives += 1;
-                    }
-                    let fp_rate = false_positives as f64 / elems.len() as f64;
-                    println!(
-                        "capacity={}, num_hash_fns={}, elems_inserted={}, false_positive_rate={}",
-                        n,
-                        k,
-                        idx + 1,
-                        fp_rate,
-                    );
-                }
-            }
-        }
-    }
+        let num_items = 10_000;
+        let wanted_fp_rate = 0.03;
+        let mut bf = Builder::<String>::new(num_items, wanted_fp_rate).build();
 
-    // TODO: Use the plotters library to understand how it goes up
-    // and the relationship between the different parameters.
-    // Criterion benchmark blackbox against a prod crate.
-    // Flame graph to understand bottlenecks.
-    // Unsafe?
-    #[test]
-    fn large_capacity() {
-        let elems = (0..1000).map(|i| i.to_string()).collect::<Vec<String>>();
-        for k in 1..=20 {
-            let mut false_positives = 0;
-            let mut bf = Builder::<&str>::new(1000, 0.03)
-                .num_hash_funcs(k as u32)
-                .build();
-            for (idx, elem) in elems.iter().enumerate() {
-                bf.insert(&elem);
-                if bf.has("foo") {
-                    false_positives += 1;
-                }
-                let fp_rate = false_positives as f64 / elems.len() as f64;
-                println!(
-                    "capacity=1000, num_hash_fns={}, elems_inserted={}, false_positive_rate={}",
-                    k,
-                    idx + 1,
-                    fp_rate,
-                );
+        for i in 0..1000 {
+            bf.insert(format!("{}", i));
+        }
+
+        let mut false_positives = 0;
+        for _ in 0..100 {
+            if bf.has("5".to_string()) {
+                false_positives += 1;
             }
         }
+        println!(
+            "capacity={}, elems_inserted={}, false_positives={}/100",
+            num_items, 1000, false_positives,
+        );
     }
 }
