@@ -14,5 +14,5 @@ crates.
 - [ ] Other common traits that could be useful
 - [ ] All CI items
 - [ ] Crates docs and doctest
-- [ ] Send + Sync traits
+- [x] Send + Sync traits
 - [ ] Fine-grained optimization looking at LLVM IR, or raw asm

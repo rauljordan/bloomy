@@ -5,7 +5,7 @@ pub trait Hasher {
     fn hash(item: impl AsRef<[u8]>) -> u64;
 }
 
-pub type HashFn<T> = Box<dyn Fn(&T) -> u64>;
+pub type HashFn<T> = Box<dyn Fn(&T) -> u64 + Send + Sync>;
 
 pub struct DefaultHasher {}
 
@@ -28,7 +28,7 @@ pub struct Builder {
 }
 
 impl Builder {
-    fn new(num_items: u32, fp_rate: f32) -> Builder {
+    pub fn new(num_items: u32, fp_rate: f32) -> Builder {
         Self {
             num_items,
             num_hash_fns: None,
@@ -40,7 +40,7 @@ impl Builder {
         self.num_hash_fns = Some(num_hash_fns);
         self
     }
-    fn build<H: Hasher, T: AsRef<[u8]>>(self) -> BloomFilter<T> {
+    pub fn build<H: Hasher, T: AsRef<[u8]>>(self) -> BloomFilter<T> {
         let num_hash_fns = match self.num_hash_fns {
             Some(n) => n,
             None => optimal_num_hash_fns(self.num_items, self.fp_rate),
@@ -78,10 +78,32 @@ impl<T: AsRef<[u8]>> BloomFilter<T> {
                 Some(b) => {
                     *b |= 1 << pos_within_bits;
                 }
-                None => panic!("index did not exist"),
+                // The position will always refer to a valid index of our bits vector.
+                None => unreachable!(),
             }
         });
     }
+    /// Checks if the bloom filter contains a specified element. The bloom filter
+    /// can produce false positives from this function at the rate specified
+    /// upon the struct's creation. It will never produce false negatives, however.
+    ///
+    /// ## Example
+    /// ```
+    /// use bloom::{Builder, DefaultHasher};
+    ///
+    /// /// Initialize a bloom filter with a default hasher over strings.
+    /// let num_items: u32 = 50;
+    /// let desired_fp_rate: f32 = 0.03;
+    /// let mut bf = Builder::new(num_items, desired_fp_rate)
+    ///                 .build::<DefaultHasher, &str>();
+    ///
+    /// bf.insert("foo");
+    /// bf.insert("bar");
+    /// bf.insert("baz");
+    ///
+    /// /// Will always return false for an item that does not exist in the filter.
+    /// assert_eq!(false, bf.has("nyan"));
+    /// ```
     pub fn has(&self, elem: T) -> bool {
         for f in self.hash_fns.iter() {
             let idx = f(&elem);
@@ -131,8 +153,15 @@ fn element_hasher<H: Hasher, T: AsRef<[u8]>>(item: &T, i: u64, m: u64) -> u64 {
 
 /// Converts an iterator into a bloom filter with a default hasher
 /// and sensible false positive rate of 0.03.
-/// TODO: Figure out how to customize these values
-/// within this trait implementation.
+///
+/// ## Example
+/// ```
+/// use bloom::{BloomFilter};
+///
+/// let items = vec!["foo", "bar", "baz"];
+/// let bf: BloomFilter<&str> = items.into_iter().collect();
+/// assert_eq!(false, bf.has("nyan"));
+/// ```
 impl<T: AsRef<[u8]>> FromIterator<T> for BloomFilter<T> {
     fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
         let items: Vec<T> = iter.into_iter().collect();
@@ -148,6 +177,8 @@ impl<T: AsRef<[u8]>> FromIterator<T> for BloomFilter<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Arc, Mutex};
+    use std::thread;
 
     #[test]
     fn ok() {
@@ -181,6 +212,27 @@ mod tests {
         assert_eq!(7, optimal_num_hash_fns(100, 0.01));
         assert_eq!(7, optimal_num_hash_fns(1, 0.01));
         assert_eq!(7, optimal_num_hash_fns(10, 0.01));
+    }
+
+    #[test]
+    fn threads() {
+        let num_items: u32 = 50;
+        let fp_rate: f32 = 0.03;
+        let bf = Builder::new(num_items, fp_rate).build::<DefaultHasher, String>();
+        let bf = Arc::new(Mutex::new(bf));
+        let mut handles = vec![];
+        for i in 0..3 {
+            let bf = bf.clone();
+            let handle = thread::spawn(move || {
+                let mut filter = bf.lock().unwrap();
+                filter.insert(format!("{}", i))
+            });
+            handles.push(handle);
+        }
+        for handle in handles {
+            handle.join().unwrap();
+        }
+        assert_eq!(false, bf.lock().unwrap().has("4".to_string()));
     }
 
     /// Empirically trying out varying values of M and K to determine
