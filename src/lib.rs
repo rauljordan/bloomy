@@ -5,21 +5,21 @@ use std::{io::Read, iter};
 /// referenced as a byte slice. Our bloom filter implementation maps
 /// the output number from this hash function to indices in its internal
 /// representation.
-pub trait Hasher {
-    fn hash(item: impl AsRef<[u8]>) -> u64;
+pub trait Hasher<T: AsRef<[u8]>> {
+    fn hash(item: &T) -> u64;
 }
 
 /// HashFn defines a function pointer that can produce a u64
 /// from an input value and is thread-safe.
-pub type HashFn<T> = Box<dyn Fn(&T) -> u64 + Send + Sync>;
+pub type HashFn<T: Clone> = Box<dyn Fn(&T) -> u64 + Send + Sync>;
 
 /// The default hasher for the bloom filter simply takes the first
 /// 8 bytes from a sha256 hash of an item and reads that
 /// as a big-endian, u64 number. It implements the Hasher trait.
 pub struct DefaultHasher {}
 
-impl Hasher for DefaultHasher {
-    fn hash(item: impl AsRef<[u8]>) -> u64 {
+impl<T: AsRef<[u8]>> Hasher<T> for DefaultHasher {
+    fn hash(item: &T) -> u64 {
         let mut hasher = Sha3_256::new();
         hasher.update(item);
         let result = hasher.finalize();
@@ -33,35 +33,28 @@ impl Hasher for DefaultHasher {
 /// Provides a way to build a bloom filter with optional fields,
 /// such as customizing the Hasher used or the number of
 /// hash functions used in its representation.
-pub struct Builder {
+pub struct Builder<T: AsRef<[u8]>> {
     num_items: u32,
     fp_rate: f32,
     num_hash_fns: Option<u32>,
+    hash_fn: fn(&T) -> u64,
 }
 
-impl Builder {
-    pub fn new(num_items: u32, fp_rate: f32) -> Builder {
+impl<T: AsRef<[u8]>> Builder<T> {
+    pub fn new(num_items: u32, fp_rate: f32) -> Builder<T> {
         Self {
             num_items,
             num_hash_fns: None,
             fp_rate,
+            hash_fn: DefaultHasher::hash,
         }
     }
     #[allow(dead_code)]
-    fn num_hash_funcs(mut self, num_hash_fns: u32) -> Builder {
+    fn num_hash_funcs(mut self, num_hash_fns: u32) -> Builder<T> {
         self.num_hash_fns = Some(num_hash_fns);
         self
     }
-    fn element_hasher<H: Hasher, T: AsRef<[u8]>>(
-        item: &T,
-        hash_fn_idx: u64,
-        num_items: u64,
-    ) -> u64 {
-        let num = H::hash(item);
-        let num = num.checked_add(hash_fn_idx).unwrap();
-        num % num_items
-    }
-    pub fn build<H: Hasher, T: AsRef<[u8]>>(self) -> BloomFilter<T> {
+    pub fn build(self) -> BloomFilter<T> {
         let num_hash_fns = match self.num_hash_fns {
             Some(n) => n,
             None => optimal_num_hash_fns(self.num_items, self.fp_rate),
@@ -69,7 +62,10 @@ impl Builder {
         let mut hash_fns: Vec<HashFn<T>> = vec![];
         for i in 0..=num_hash_fns {
             let f = Box::new(move |elem: &T| {
-                Self::element_hasher::<H, T>(elem, i as u64, self.num_items as u64)
+                let hf = (self.hash_fn).clone();
+                let num = hf(elem);
+                let num = num.checked_add(i as u64).unwrap();
+                num % (self.num_items as u64)
             });
             hash_fns.push(f);
         }
@@ -186,7 +182,7 @@ impl<T: AsRef<[u8]>> FromIterator<T> for BloomFilter<T> {
     fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
         let items: Vec<T> = iter.into_iter().collect();
         let num_items = items.len() + 100;
-        let mut bloom_filter = Builder::new(num_items as u32, 0.03).build::<DefaultHasher, T>();
+        let mut bloom_filter = Builder::<T>::new(num_items as u32, 0.03).build();
         for i in items.into_iter() {
             bloom_filter.insert(i);
         }
@@ -204,7 +200,7 @@ mod tests {
     fn ok() {
         let num_items: u32 = 50;
         let fp_rate: f32 = 0.03;
-        let mut bf = Builder::new(num_items, fp_rate).build::<DefaultHasher, &str>();
+        let mut bf = Builder::<&str>::new(num_items, fp_rate).build();
         let wanted_bit_count = optimal_bits_needed(num_items, fp_rate);
         let wanted_byte_count = (wanted_bit_count as f64 / 8.0).ceil() as u32;
         assert_eq!(wanted_byte_count, bf.bits.len() as u32);
@@ -238,7 +234,7 @@ mod tests {
     fn threads() {
         let num_items: u32 = 50;
         let fp_rate: f32 = 0.03;
-        let bf = Builder::new(num_items, fp_rate).build::<DefaultHasher, String>();
+        let bf = Builder::<String>::new(num_items, fp_rate).build();
         let bf = Arc::new(Mutex::new(bf));
         let mut handles = vec![];
         for i in 0..=3 {
@@ -264,9 +260,9 @@ mod tests {
             let elems = (0..n).map(|i| i.to_string()).collect::<Vec<String>>();
             for k in 1..=n - 1 {
                 let mut false_positives = 0;
-                let mut bf = Builder::new(n, 0.03)
+                let mut bf = Builder::<&str>::new(n, 0.03)
                     .num_hash_funcs(k as u32)
-                    .build::<DefaultHasher, &str>();
+                    .build();
                 for (idx, elem) in elems.iter().enumerate() {
                     bf.insert(&elem);
                     if bf.has("foo") {
@@ -295,9 +291,9 @@ mod tests {
         let elems = (0..1000).map(|i| i.to_string()).collect::<Vec<String>>();
         for k in 1..=20 {
             let mut false_positives = 0;
-            let mut bf = Builder::new(1000, 0.03)
+            let mut bf = Builder::<&str>::new(1000, 0.03)
                 .num_hash_funcs(k as u32)
-                .build::<DefaultHasher, &str>();
+                .build();
             for (idx, elem) in elems.iter().enumerate() {
                 bf.insert(&elem);
                 if bf.has("foo") {
