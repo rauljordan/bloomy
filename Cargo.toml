@@ -15,3 +15,6 @@ criterion = "0.3"
 [[bench]]
 name = "bloom_benchmark"
 harness = false
+
+[features]
+criterion = ["html_reports"]

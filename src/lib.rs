@@ -57,7 +57,6 @@ impl Builder {
         hash_fn_idx: u64,
         num_items: u64,
     ) -> u64 {
-        assert!(i < 32);
         let num = H::hash(item);
         let num = num.checked_add(hash_fn_idx).unwrap();
         num % num_items
