@@ -1,9 +1,13 @@
 [package]
 name = "bloomy"
+description = "fast bloom filter implementation with thorough documentation and tests"
+readme = "README.md"
+repository = "https://github.com/rauljordan/bloomy"
 version = "0.1.0"
 edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+license = "MIT"
+keywords = ["data-structures", "bloom"]
+categories = ["data-structures"]
 
 [dependencies]
 sha3 = "0.10.6"

@@ -223,6 +223,10 @@ impl<T: AsRef<[u8]>> BloomFilter<T> {
         }
         true
     }
+    /// Clear all set bits of the bloom filter, setting them back to zero.
+    pub fn clear(&mut self) {
+        self.bits.iter_mut().for_each(|elem| *elem = 0);
+    }
 }
 
 /// Computes the optimal bits needed to store n items with an expected false positive
