@@ -1,4 +1,4 @@
-# Bloomy
+# Flowerbloom
 
 Fast bloom filter library written in Rust. My attempt at creating a production-ready
 crate with as nice of an API, documentation, tests, and CI as possible. Hilariously overengineered
@@ -8,13 +8,13 @@ crates.
 
 ## Benchmarks
 
-Bloomy is fast compared to the other popular bloomfilter crate given its simplicity
+Flowerbloom is fast compared to the other popular bloomfilter crate given its simplicity
 and choice of default hashing operations.
 
 ```
 # Inserting and checking into a capacity 100k bloom filter with fp rate of 0.03
 
-crate comparisons/bloomy crate                                                                            
+crate comparisons/flowerbloom crate                                                                            
                         time:   [71.530 ns 71.620 ns 71.737 ns]
 crate comparisons/bloomfilter crate                                                                             
                         time:   [17.842 µs 17.887 µs 17.946 µs]
