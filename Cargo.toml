@@ -10,7 +10,12 @@ sha3 = "0.10.6"
 
 [dev-dependencies]
 criterion = { version = "0.3", features = ["html_reports"] }
+bloomfilter = "1"
 
 [[bench]]
 name = "bloom_benchmark"
+harness = false
+
+[[bench]]
+name = "other_crate_compare_benchmark"
 harness = false

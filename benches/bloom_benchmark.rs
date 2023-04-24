@@ -1,17 +1,17 @@
-use bloomy::Builder;
+use bloomy::BloomBuilder;
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 
 pub fn criterion_benchmark(c: &mut Criterion) {
     c.bench_function("insert=1, capacity=100", |b| {
         let num_items = 100;
         let fp_rate = 0.03;
-        let mut bf = Builder::<&str>::new(num_items, fp_rate).build();
+        let mut bf = BloomBuilder::<&str>::new(num_items, fp_rate).build();
         b.iter(|| bf.insert(black_box("hi")))
     });
     c.bench_function("insert=1, capacity=10,000", |b| {
         let num_items = 10_000;
         let fp_rate = 0.03;
-        let mut bf = Builder::<&str>::new(num_items, fp_rate).build();
+        let mut bf = BloomBuilder::<&str>::new(num_items, fp_rate).build();
         b.iter(|| bf.insert(black_box("hi")))
     });
     c.bench_function("insert=10_000, capacity=100_000", |b| {
@@ -21,7 +21,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         }
         let num_items = 100_000;
         let fp_rate = 0.03;
-        let mut bf = Builder::<&str>::new(num_items, fp_rate).build();
+        let mut bf = BloomBuilder::<&str>::new(num_items, fp_rate).build();
         b.iter(|| {
             for item in items.iter() {
                 bf.insert(black_box(item))
@@ -35,7 +35,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         }
         let num_items = 100_000;
         let fp_rate = 0.03;
-        let bf = Builder::<&str>::new(num_items, fp_rate).build();
+        let bf = BloomBuilder::<&str>::new(num_items, fp_rate).build();
         b.iter(|| bf.has("5"))
     });
 }
