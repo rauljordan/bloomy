@@ -1,8 +1,8 @@
 [package]
-name = "bloomy"
+name = "flowerbloom"
 description = "fast bloom filter implementation with thorough documentation and tests"
 readme = "README.md"
-repository = "https://github.com/rauljordan/bloomy"
+repository = "https://github.com/rauljordan/flowerbloom"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"

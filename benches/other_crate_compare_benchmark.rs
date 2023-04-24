@@ -1,6 +1,6 @@
 use bloomfilter::Bloom;
-use bloomy::{BloomBuilder, BloomFilter};
 use criterion::{criterion_group, criterion_main, Criterion};
+use flowerbloom::{BloomBuilder, BloomFilter};
 
 fn bench_fibs(c: &mut Criterion) {
     let capacity = 100_000;

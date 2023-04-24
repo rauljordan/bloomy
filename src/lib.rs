@@ -40,7 +40,7 @@ impl<T: AsRef<[u8]>> Hasher<T> for DefaultHasher {
 /// ```
 /// use std::io::Read;
 /// use sha3::{Digest, Sha3_512};
-/// use bloomy::{BloomBuilder, BloomFilter, Hasher};
+/// use flowerbloom::{BloomBuilder, BloomFilter, Hasher};
 ///
 /// pub struct CustomHasher {}
 
@@ -126,7 +126,7 @@ impl<T: AsRef<[u8]>> BloomFilter<T> {
     ///
     /// ## Example
     /// ```
-    /// use bloomy::BloomFilter;
+    /// use flowerbloom::BloomFilter;
     /// let capacity = 1000;
     /// let desired_fp_rate = 0.01;
     /// let mut bf = BloomFilter::new(capacity, desired_fp_rate);
@@ -154,7 +154,7 @@ impl<T: AsRef<[u8]>> BloomFilter<T> {
     /// Insert an element into the bloom filter
     /// ## Example
     /// ```
-    /// use bloomy::BloomFilter;
+    /// use flowerbloom::BloomFilter;
     /// let capacity = 1000;
     /// let desired_fp_rate = 0.01;
     /// let mut bf = BloomFilter::new(capacity, desired_fp_rate);
@@ -185,7 +185,7 @@ impl<T: AsRef<[u8]>> BloomFilter<T> {
     ///
     /// ## Example
     /// ```
-    /// use bloomy::{BloomBuilder, BloomFilter};
+    /// use flowerbloom::{BloomBuilder, BloomFilter};
     ///
     /// /// Initialize a bloom filter with a default hasher over strings.
     /// let capacity: u32 = 50;
@@ -264,7 +264,7 @@ pub fn optimal_num_hash_fns(num_items: u32, fp_rate: f32) -> u32 {
 ///
 /// ## Example
 /// ```
-/// use bloomy::{BloomFilter};
+/// use flowerbloom::{BloomFilter};
 ///
 /// let items = vec!["foo", "bar", "baz"];
 /// let bf: BloomFilter<&str> = items.into_iter().collect();
