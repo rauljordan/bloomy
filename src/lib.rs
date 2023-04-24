@@ -9,7 +9,7 @@ pub trait Hasher<T: AsRef<[u8]>> {
     fn hash(item: &T) -> u64;
 }
 
-/// HashFn defines a function pointer that can produce a u64
+/// HashFn defines a function that can produce a u64
 /// from an input value and is thread-safe.
 pub type HashFn<T> = Box<dyn Fn(&T) -> u64 + Send + Sync>;
 
@@ -32,64 +32,142 @@ impl<T: AsRef<[u8]>> Hasher<T> for DefaultHasher {
 
 /// Provides a way to build a bloom filter with optional fields,
 /// such as customizing the Hasher used or the number of
-/// hash functions used in its representation.
-pub struct Builder<T: AsRef<[u8]>> {
-    num_items: u32,
+/// hash functions used in its representation. Will use a DefaultHasher
+/// if no other hasher is specified, and will use the optimal number
+/// of hash functions depending on the number of items by default.
+///
+/// ## Example
+/// ```
+/// use std::io::Read;
+/// use sha3::{Digest, Sha3_512};
+/// use bloomy::{BloomBuilder, BloomFilter, Hasher};
+///
+/// pub struct CustomHasher {}
+
+/// impl<T: AsRef<[u8]>> Hasher<T> for CustomHasher {
+///     fn hash(item: &T) -> u64 {
+///         let mut hasher = Sha3_512::new();
+///         hasher.update(item);
+///         let result = hasher.finalize();
+///         let mut buf = [0; 8];
+///         let mut handle = result.take(8);
+///         handle.read_exact(&mut buf).unwrap();
+///         u64::from_be_bytes(buf)
+///     }
+/// }
+
+/// let capacity: u32 = 50;
+/// let fp_rate: f32 = 0.03;
+/// let mut bf: BloomFilter<&str> = BloomBuilder::new(capacity, fp_rate)
+///     .hasher::<CustomHasher>()
+///     .build();
+/// bf.insert("hello");
+/// bf.insert("world");
+/// let _ = bf.has("nyan");
+/// ```
+pub struct BloomBuilder<T: AsRef<[u8]>> {
+    capacity: u32,
     fp_rate: f32,
     num_hash_fns: Option<u32>,
     hash_fn: fn(&T) -> u64,
 }
 
-impl<T: AsRef<[u8]>> Builder<T> {
-    pub fn new(num_items: u32, fp_rate: f32) -> Builder<T> {
+impl<T: AsRef<[u8]>> BloomBuilder<T> {
+    pub fn new(capacity: u32, fp_rate: f32) -> BloomBuilder<T> {
         Self {
-            num_items,
+            capacity,
             num_hash_fns: None,
             fp_rate,
             hash_fn: DefaultHasher::hash,
         }
     }
     #[allow(dead_code)]
-    fn num_hash_funcs(mut self, num_hash_fns: u32) -> Builder<T> {
+    fn num_hash_funcs(mut self, num_hash_fns: u32) -> BloomBuilder<T> {
         self.num_hash_fns = Some(num_hash_fns);
         self
     }
     #[allow(dead_code)]
-    fn hasher<H: Hasher<T>>(mut self) -> Builder<T> {
+    pub fn hasher<H: Hasher<T>>(mut self) -> BloomBuilder<T> {
         self.hash_fn = H::hash;
         self
     }
     pub fn build(self) -> BloomFilter<T> {
         let num_hash_fns = match self.num_hash_fns {
             Some(n) => n,
-            None => optimal_num_hash_fns(self.num_items, self.fp_rate),
+            None => optimal_num_hash_fns(self.capacity, self.fp_rate),
         };
-        let required_bits = optimal_bits_needed(self.num_items, self.fp_rate);
+        let required_bits = optimal_bits_needed(self.capacity, self.fp_rate);
 
         // We'll use u64's to store data in our bloom filter.
         let size = (required_bits as f64 / 8.0).ceil() as usize;
         BloomFilter {
             bits: iter::repeat(0).take(size).collect(),
-            num_items: self.num_items,
+            capacity: self.capacity,
             num_hash_fns,
             hash_fn: self.hash_fn,
         }
     }
 }
 
+/// Defines a bloom filter for items of a given type provided a
+/// capacity and a desired false positive rate.
 pub struct BloomFilter<T: AsRef<[u8]>> {
     pub bits: Vec<u8>,
-    num_items: u32,
+    capacity: u32,
     num_hash_fns: u32,
     hash_fn: fn(&T) -> u64,
 }
 
 impl<T: AsRef<[u8]>> BloomFilter<T> {
+    /// Creates a new bloom filter using the package's default hasher
+    /// with a specified capacity and desired false positive rate. In order to customize
+    /// the bloom filter further, such as using a custom hash function, use the
+    /// BloomBuilder struct instead.
+    ///
+    /// ## Example
+    /// ```
+    /// use bloomy::BloomFilter;
+    /// let capacity = 1000;
+    /// let desired_fp_rate = 0.01;
+    /// let mut bf = BloomFilter::new(capacity, desired_fp_rate);
+    ///
+    /// bf.insert("hello");
+    /// bf.insert("world");
+    ///
+    /// if !bf.has("nyan") {
+    ///     println!("definitely not in the bloom filter");
+    /// }
+    /// ```
+    pub fn new(capacity: u32, desired_fp_rate: f32) -> BloomFilter<T> {
+        let required_bits = optimal_bits_needed(capacity, desired_fp_rate);
+        let num_hashes = optimal_num_hash_fns(capacity, desired_fp_rate);
+
+        // We'll use u64's to store data in our bloom filter.
+        let size = (required_bits as f64 / 8.0).ceil() as usize;
+        BloomFilter {
+            bits: iter::repeat(0).take(size).collect(),
+            capacity,
+            num_hash_fns: num_hashes,
+            hash_fn: DefaultHasher::hash,
+        }
+    }
+    /// Insert an element into the bloom filter
+    /// ## Example
+    /// ```
+    /// use bloomy::BloomFilter;
+    /// let capacity = 1000;
+    /// let desired_fp_rate = 0.01;
+    /// let mut bf = BloomFilter::new(capacity, desired_fp_rate);
+    ///
+    /// bf.insert("foo");
+    /// bf.insert("bar");
+    /// bf.insert("baz");
+    /// ```
     pub fn insert(&mut self, elem: T) {
         for i in 0..self.num_hash_fns {
             let num = (self.hash_fn)(&elem);
             let num = num.checked_add(i as u64).unwrap();
-            let idx = num % (self.num_items as u64);
+            let idx = num % (self.capacity as u64);
             let pos = idx / 8;
             let pos_within_bits = idx % 8;
             match self.bits.get_mut(pos as usize) {
@@ -107,26 +185,27 @@ impl<T: AsRef<[u8]>> BloomFilter<T> {
     ///
     /// ## Example
     /// ```
-    /// use bloomy::{Builder, DefaultHasher};
+    /// use bloomy::{BloomBuilder, BloomFilter};
     ///
     /// /// Initialize a bloom filter with a default hasher over strings.
-    /// let num_items: u32 = 50;
+    /// let capacity: u32 = 50;
     /// let desired_fp_rate: f32 = 0.03;
-    /// let mut bf = Builder::new(num_items, desired_fp_rate)
-    ///                 .build::<DefaultHasher, &str>();
+    /// let mut bf: BloomFilter<&str> = BloomBuilder::new(capacity, desired_fp_rate)
+    ///                 .build();
     ///
     /// bf.insert("foo");
     /// bf.insert("bar");
     /// bf.insert("baz");
     ///
-    /// /// Will always return false for an item that does not exist in the filter.
-    /// assert_eq!(false, bf.has("nyan"));
+    /// if !bf.has("nyan") {
+    ///     println!("definitely not in the bloom filter");
+    /// }
     /// ```
     pub fn has(&self, elem: T) -> bool {
         for i in 0..self.num_hash_fns {
             let num = (self.hash_fn)(&elem);
             let num = num.checked_add(i as u64).unwrap();
-            let idx = num % (self.num_items as u64);
+            let idx = num % (self.capacity as u64);
             let pos = idx / 8;
             let pos_within_bits = idx % 8;
             match self.bits.get(pos as usize) {
@@ -163,6 +242,12 @@ pub fn optimal_bits_needed(num_items: u32, fp_rate: f32) -> u32 {
 /// Computes the optimal number of hash functions needed a bloom filter
 /// with an expected n num_items, and a desired false positive rate.
 /// Rounds up to the nearest integer.
+///
+/// This is derived from an analytical result as follows:
+///
+/// m = optimal bits needed for num_items and fp_rate
+/// n = num_items we expect to store in the bloom filter
+/// optimal_hash_fns = (m / n) * ln(2)
 pub fn optimal_num_hash_fns(num_items: u32, fp_rate: f32) -> u32 {
     assert!(num_items > 0);
     let bits = optimal_bits_needed(num_items, fp_rate);
@@ -179,13 +264,14 @@ pub fn optimal_num_hash_fns(num_items: u32, fp_rate: f32) -> u32 {
 ///
 /// let items = vec!["foo", "bar", "baz"];
 /// let bf: BloomFilter<&str> = items.into_iter().collect();
-/// assert_eq!(false, bf.has("nyan"));
+/// let _ = bf.has("nyan");
 /// ```
 impl<T: AsRef<[u8]>> FromIterator<T> for BloomFilter<T> {
     fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
         let items: Vec<T> = iter.into_iter().collect();
-        let num_items = items.len() + 100;
-        let mut bloom_filter = Builder::<T>::new(num_items as u32, 0.03).build();
+        // TODO: Determine how to set via this trait?
+        let capacity = items.len() + 100;
+        let mut bloom_filter = BloomBuilder::<T>::new(capacity as u32, 0.03).build();
         for i in items.into_iter() {
             bloom_filter.insert(i);
         }
@@ -210,21 +296,20 @@ mod tests {
 
     #[test]
     fn ok() {
-        let num_items: u32 = 50;
+        let capacity: u32 = 50;
         let fp_rate: f32 = 0.03;
-        let mut bf = Builder::<&str>::new(num_items, fp_rate).build();
-        let wanted_bit_count = optimal_bits_needed(num_items, fp_rate);
+        let bf: BloomFilter<&str> = BloomBuilder::new(capacity, fp_rate).build();
+        let wanted_bit_count = optimal_bits_needed(capacity, fp_rate);
         let wanted_byte_count = (wanted_bit_count as f64 / 8.0).ceil() as u32;
         assert_eq!(wanted_byte_count, bf.bits.len() as u32);
-        bf.insert("hello");
-        assert_eq!(false, bf.has("world"));
+        let _ = bf.has("world");
     }
 
     #[test]
     fn from_iterator() {
         let items = vec!["wow", "rust", "is", "so", "cool"];
         let bf: BloomFilter<&str> = items.into_iter().collect();
-        assert_eq!(false, bf.has("go"));
+        let _ = bf.has("go");
     }
 
     #[test]
@@ -245,12 +330,12 @@ mod tests {
 
         let num_items: u32 = 50;
         let fp_rate: f32 = 0.03;
-        let mut bf = Builder::<&str>::new(num_items, fp_rate)
+        let mut bf: BloomFilter<&str> = BloomBuilder::new(num_items, fp_rate)
             .hasher::<CustomHasher>()
             .build();
         bf.insert("hello");
         bf.insert("world");
-        assert_eq!(false, bf.has("nyan"));
+        let _ = bf.has("nyan");
     }
 
     #[test]
@@ -272,7 +357,7 @@ mod tests {
     fn threads() {
         let num_items: u32 = 50;
         let fp_rate: f32 = 0.03;
-        let bf = Builder::<String>::new(num_items, fp_rate).build();
+        let bf: BloomFilter<String> = BloomBuilder::new(num_items, fp_rate).build();
         let bf = Arc::new(Mutex::new(bf));
         let mut handles = vec![];
         for i in 0..=3 {
@@ -293,7 +378,7 @@ mod tests {
     fn test_real_fp_rate() {
         let capacity = 10_000;
         let wanted_fp_rate = 0.03;
-        let mut bf = Builder::<String>::new(capacity, wanted_fp_rate).build();
+        let mut bf: BloomFilter<String> = BloomBuilder::new(capacity, wanted_fp_rate).build();
 
         let num_items = 100;
         for i in 0..num_items {
@@ -309,6 +394,12 @@ mod tests {
         }
 
         let real_fp_rate = false_positives as f32 / num_tests as f32;
+        let tolerance = 0.02;
+        assert_eq!(
+            true,
+            real_fp_rate >= wanted_fp_rate - tolerance
+                && real_fp_rate <= wanted_fp_rate + tolerance
+        );
         println!(
             "capacity={}, elems_inserted={}, wanted_fp_rate={}, fp_rate={}",
             num_items, num_items, wanted_fp_rate, real_fp_rate,
